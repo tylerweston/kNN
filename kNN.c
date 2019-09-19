@@ -7,6 +7,8 @@
 *  - Right now this is only k = 1 which works fine for this dataset
 *    but finish implementing a max-heap so we can extend to k > 1
 *    efficiently.
+*  - improve efficiency, this is SLOOOOOW currently
+*  - try different distance metrics
 */
 
 // to compile:
@@ -30,6 +32,7 @@
 #define WINDOW_HEIGHT 100
 #define TRAIN_SIZE 50000        // size of training data
 #define VALIDATION_SIZE 10000   // size of validation data
+#define TEST_SIZE 10000
 #define TOTAL_SIZE  (TRAIN_SIZE + VALIDATION_SIZE)
 
 #define DEBUG false
@@ -70,6 +73,10 @@ typedef unsigned char uint8;
 uint8 *labels;
 // pointer to image data
 uint8 *images;
+// pointer to test labels
+uint8 *test_labels;
+// pointer to test images
+uint8 *test_images;
 
 int image_size = 28 * 28;
 int right = 0 , wrong = 0, total = 0;
@@ -77,9 +84,11 @@ int right = 0 , wrong = 0, total = 0;
 // function prototypes -------------------------------------
 // this can go into a header eventually
 int do_quit(struct windowInfo);
-uint8* read_labels(void);
-uint8* read_images(void);
-float distance(int, int);
+uint8* read_labels(char *, int);
+uint8* read_images(char *, int);
+
+float distance_euclid(int, int);
+float distance_manhattan(int, int);
 
 // max-heap funcs
 struct heap* new_heap(int);
@@ -113,17 +122,15 @@ int main(void)
     bool quit = false;
     bool do_training = true;
 
-    labels = read_labels();
-    images = read_images();
+    labels = read_labels("train_labels.dat", TOTAL_SIZE);
+    images = read_images("train_images.dat", TOTAL_SIZE);
+    
+    test_labels = read_labels("test_labels.dat", TEST_SIZE);
+    test_images = read_images("test_images.dat", TEST_SIZE);
 
-    int index = 0;
+    int image_index = 0;
 
-    int label_index = 0;
-
-    int predicted = 0;
-
-    int image_index;
-
+    // to do: THIS DOES NOTHING RIGHT NOW
     struct heap* nearest_n = new_heap(K_NEAREST);
 
     // main game loop here!
@@ -147,10 +154,8 @@ int main(void)
                 switch ( ev.key.keysym.sym )
                 { 
                     case SDLK_SPACE:
-
                         break;
                     case SDLK_UP:
-                        //press up to print a random double
                         break;
                     case SDLK_DOWN:
                         // down arrow
@@ -170,20 +175,23 @@ int main(void)
             }
         }
 
-        // image_index = rand() % TRAIN_SIZE;          // get a random image from our validation set
+        // get images from validation set right now
         image_index = rand() % VALIDATION_SIZE;
         image_index += TRAIN_SIZE;
+        // we can also try to grab this from test data eventually
+        // once we've tuned hyperparameter k
 
         int expected_value = labels[image_index];   // what should this image really be?
 
         int closest_index = 0;
         float closest_distance = 99999.0; // make this neg so we know we don't have anything yet.
+        
         for (int cur_im = 0; cur_im < TRAIN_SIZE; cur_im++) 
         {
             if (cur_im == image_index)  // don't check against ourself
                 continue;
 
-            float this_dis = distance(image_index, cur_im);
+            float this_dis = distance_manhattan(image_index, cur_im);
 
             // TODO:
             // if this distance is less than the distance stored at root of heap:
@@ -210,33 +218,24 @@ int main(void)
         }
         total++;
 
-        uint8 brightness;
+        uint8 b1, b2;
         // display our image
-        int im_index = ii(image_index);
+        int im_index1 = ii(image_index);
+        int im_index2 = ii(closest_index);
         int i = 0;
-        for (int y = 0; y < 28; y++) 
-        {
-            for (int x = 0; x < 28; x++) 
-            {
-                brightness = images[im_index + i];
-                i++;
-                //brightness *= 250;
-                SDL_SetRenderDrawColor(renderer, brightness, brightness, brightness, 255);
-                SDL_RenderDrawPoint(renderer, x + 28, y + 28);
-            }
-        } 
 
-        // display the guess image
-        im_index = ii(closest_index);
-        i = 0;
         for (int y = 0; y < 28; y++) 
         {
             for (int x = 0; x < 28; x++) 
             {
-                brightness = images[im_index + i];
+                b1 = images[im_index1 + i];
+                b2 = images[im_index2 + i];
                 i++;
-                //brightness *= 250;
-                SDL_SetRenderDrawColor(renderer, brightness, brightness, brightness, 255);
+
+                SDL_SetRenderDrawColor(renderer, b1, b1, b1, 255);
+                SDL_RenderDrawPoint(renderer, x + 28, y + 28);
+            
+                SDL_SetRenderDrawColor(renderer, b2, b2, b2, 255);
                 SDL_RenderDrawPoint(renderer, x + 128, y + 28);
             }
         } 
@@ -272,26 +271,45 @@ int do_quit(struct windowInfo q_window)
     exit(0);
 }
 
-float distance(int image1_index, int image2_index) 
+float distance_euclide(int image1_index, int image2_index) 
 {
     // calculate euclidean distance from image1 to image2
-
-    float d = 0.0;
+    // TODO:
+    //  - how to make this more efficient??!
+    //  - probably spend this most time here!
+    float d = 0.0, i1, i2;
     int image1_offset = ii(image1_index);   
-    int image2_offset = ii(image2_index);   
-    for (int x1 = 0 ; x1 < 28; x1++) 
+    int image2_offset = ii(image2_index);
+
+    for (int j = 0 ; j < image_size; j++) 
     {
-        for (int y1 = 0; y1 < 28; y1++) 
-        {
-            int ind = x1 * 28 + y1;
-            float i1 = images[image1_offset + ind];
-            float i2 = images[image2_offset + ind];
-            if (i1 != i2)
-                d += pow(i2 - i1, 2);   // sum over square of distances
-        }
+        i1 = images[image1_offset++];
+        i2 = images[image2_offset++];
+        if (i1 != i2)
+            d += pow(i2 - i1, 2);   // sum over square of distances
     }
 
-    return sqrt(d); // return square root of sum of distances
+    //return sqrt(d); // return square root of sum of distances
+    return d;       // don't need to root since d is positive, won't change results
+}
+
+float distance_manhattan(int image1_index, int image2_index) 
+{
+    // calculate manhattan distance from image1 to image2
+
+    float d = 0.0, i1, i2;
+    int image1_offset = ii(image1_index);   
+    int image2_offset = ii(image2_index);
+
+    for (int j = 0 ; j < image_size; j++) 
+    {
+        i1 = images[image1_offset++];
+        i2 = images[image2_offset++];
+        if (i1 != i2)
+            d += abs(i2 - i1);   // sum over square of distances
+    }
+
+    return d; // return distance
 }
 
 double dot_product(double a[], double b[], int n) 
@@ -308,33 +326,33 @@ double dot_product(double a[], double b[], int n)
 
 // data reading functions ------------------------------------------------
 
-uint8* read_images(void) 
+uint8* read_images(char *path, int size) 
 {
     // after this all the labels have been read to
     // uint8 array images
     uint8 *images = NULL;
-    images = (uint8 *) calloc(TOTAL_SIZE * image_size, sizeof(uint8));
+    images = (uint8 *) calloc(size * image_size, sizeof(uint8));
     FILE *image_file = NULL;
-    image_file = fopen("train_images.dat", "r");
+    image_file = fopen(path, "r");
     // skip to start of labels
     fseek(image_file, 16L, SEEK_SET);
     // read all data
-    fread(images, TOTAL_SIZE * image_size, 1, image_file);
+    fread(images, size * image_size, 1, image_file);
     return images;
 }
 
-uint8* read_labels(void) 
+uint8* read_labels(char * path, int size) 
 {
     // after this all the labels have been read to
     // uint8 array labels
     uint8 *labels = NULL;
-    labels = (uint8 *) calloc(TOTAL_SIZE, sizeof(uint8));
+    labels = (uint8 *) calloc(size, sizeof(uint8));
     FILE *label_file = NULL;
-    label_file = fopen("train_labels.dat", "r");
+    label_file = fopen(path, "r");
     // skip to start of labels
     fseek(label_file, 8L, SEEK_SET);
     // read all data
-    fread(labels, TOTAL_SIZE, 1, label_file);
+    fread(labels, size, 1, label_file);
     return labels;
 }
 
